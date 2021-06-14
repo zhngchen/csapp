@@ -216,7 +216,13 @@ int negate(int x) {
  *   Rating: 3
  */
 int isAsciiDigit(int x) {
-  return 2;
+  // x - 0x30 >= 0  && 0x39 - x >= 0
+  int negate = 0x01 << 31;
+  int res;
+
+  res = !((x + ~0x30 + 1) & negate) & !((0x39 + ~x + 1) & negate);
+
+  return res;
 }
 /* 
  * conditional - same as x ? y : z 
@@ -226,7 +232,12 @@ int isAsciiDigit(int x) {
  *   Rating: 3
  */
 int conditional(int x, int y, int z) {
-  return 2;
+  // (x and y) | (~x and z) bool变量必然可以
+  // 将x的值映射到 0x0000 或 0xFFFF
+  int tmp = ~(!!x) + 1;  // x == 0 tmp = 0;  x != 0 tmp = 0XFFF..
+  int res = (tmp & y) | (~tmp & z);
+
+  return res;
 }
 /* 
  * isLessOrEqual - if x <= y  then return 1, else return 0 
@@ -236,7 +247,14 @@ int conditional(int x, int y, int z) {
  *   Rating: 3
  */
 int isLessOrEqual(int x, int y) {
-  return 2;
+  // y - x >= 0(有可能溢出)
+  // 处理溢出需要判断符号位, 同号不可能溢出
+  int sgn_x = x >> 31;  // 0x0000 或 0xFFFF
+  int sgn_y = y >> 31;
+  int res = (!!(sgn_x & !sgn_y)) | ((!(sgn_x ^ sgn_y)) & !((y + ~x + 1) >> 31));
+  // 前面依据符号位给出0/1 后面在x == y下计算y - x >= 0
+
+  return res;
 }
 //4
 /* 
@@ -248,7 +266,11 @@ int isLessOrEqual(int x, int y) {
  *   Rating: 4 
  */
 int logicalNeg(int x) {
-  return 2;
+  // 只要x不为0， x与x的补码最高位一定有一个为1
+  int res = ((x | (~x + 1)) >> 31) + 1;
+  // 最高位为1，进行算数右移
+
+  return res;
 }
 /* howManyBits - return the minimum number of bits required to represent x in
  *             two's complement
@@ -262,7 +284,22 @@ int logicalNeg(int x) {
  *  Max ops: 90
  *  Rating: 4
  */
+// 首先把题想明白，12 => 01100, -1 => 1, -5 => 1011
 int howManyBits(int x) {
+  int sign, b0, b1, b2, b4, b8, b16;
+  sign = (x >> 31);
+  x = (sign & ~x) | (~sign & x); // 让x>=0时不变，<0则取反
+  b16 = !!(x >> 16) << 4;  // 高16bit不为0，意味着至少需要16bit表示低位
+  x = x >> b16;            
+  b8 = !!(x >> 8) << 3;
+  x = x >> b8;
+  b4 = !!(x >> 4) << 2;
+  x = x >> b4;
+  b2 = !!(x >> 2) << 1;
+  x = x >> b2;
+  b1 = !!(x >> 1);
+  b0 = x >> b1;
+  return b16 + b8 + b4 + b2 + b1 + b0 + 1;
   return 0;
 }
 //float
@@ -278,7 +315,32 @@ int howManyBits(int x) {
  *   Rating: 4
  */
 unsigned floatScale2(unsigned uf) {
-  return 2;
+  unsigned e = (uf >> 23) & 0xff;  // 阶码
+  unsigned s = uf & (0x01 << 31);  // 符号位, 10000.. 或 00000..,便于组合
+  unsigned f = (uf << 9) >> 9;          // 尾数
+  unsigned res;
+
+  if (e == 0x00)  // 非规格化
+  {
+    // 除了符号位，整体左移一位
+    res = uf << 1 | s;
+
+  }
+  else if (e == 0xff)  // 特殊值
+  {
+    res = uf;
+  }
+  else // 规格
+  {
+    if (e == 0xfe) // 无穷
+    {
+      res = s | (0xff000000 >> 1);
+    }
+    else
+      res = s | ((e + 1) << 23) | f;
+  }
+
+  return res;
 }
 /* 
  * floatFloat2Int - Return bit-level equivalent of expression (int) f
@@ -293,7 +355,26 @@ unsigned floatScale2(unsigned uf) {
  *   Rating: 4
  */
 int floatFloat2Int(unsigned uf) {
-  return 2;
+  unsigned e = (uf >> 23) & 0xff;  // 阶码
+  unsigned s = uf & (0x01 << 31);  // 符号位, 10000.. 或 00000..,便于组合
+  unsigned f = (uf << 9) >> 9;     // 尾数
+
+  if (!s && e == 0x9e && f == 0)  // 此时边界, E = e - bias = 31
+    return 0x01 << 31;
+  
+  if (e >= 0x9e) // 超出; 特殊值
+    return 0x80000000;
+
+  if (e < 127) //  < 1  bias = 127
+    return 0;
+  // 规格化，范围内
+  unsigned E = e - 127;
+  // 1.f * 2^E,  应该需要f的前E个bit
+  int g = E <= 23 ? (f >> (23 - E)) : (f << (E - 23));
+  int pos_res = g | 0x01 << E;  // 填上1,此时符号位一定为0
+  int res = !s ? pos_res : ~pos_res + 1;  // 为负的调整
+
+  return res;
 }
 /* 
  * floatPower2 - Return bit-level equivalent of the expression 2.0^x
@@ -309,5 +390,16 @@ int floatFloat2Int(unsigned uf) {
  *   Rating: 4
  */
 unsigned floatPower2(int x) {
-    return 2;
+  // float E范围 : -126 ~ 127
+  if (x < -126)
+    return 0;
+  
+  if (x > 127)
+    return 0xff000000 >> 1;
+  
+  if (x == -126) // 非规格化
+    return 0x01;
+  
+  unsigned e = x + 127;
+  return e << 23;
 }
